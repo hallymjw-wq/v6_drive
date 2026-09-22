@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+  <meta name="theme-color" content="#08090b">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="V6 Drive">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icon-180.png">
+  <title>V6 GPS Active Sound</title>
+  <style>
+    :root{
+      --bg:#08090b; --panel:#111319; --panel2:#171a22; --text:#f4f6fb;
+      --muted:#8d94a3; --line:#262b36; --accent:#f4f6fb; --danger:#ff5d5d;
+    }
+    *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+    html,body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Pretendard","Noto Sans KR",sans-serif}
+    body{min-height:100svh;overflow-x:hidden}
+    .wrap{max-width:640px;margin:0 auto;padding:calc(env(safe-area-inset-top) + 18px) 18px calc(env(safe-area-inset-bottom) + 28px)}
+    .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}
+    .brand{font-weight:800;letter-spacing:.08em;font-size:13px}
+    .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#555;margin-right:8px;vertical-align:1px}
+    .dot.on{background:#54e38e;box-shadow:0 0 16px rgba(84,227,142,.7)}
+    .status{font-size:12px;color:var(--muted)}
+    .speedCard{background:linear-gradient(180deg,#111319,#0d0f14);border:1px solid var(--line);border-radius:28px;padding:32px 24px 24px;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,.25)}
+    .speed{font-size:92px;line-height:.9;font-weight:800;letter-spacing:-.065em;font-variant-numeric:tabular-nums}
+    .unit{margin-top:10px;color:var(--muted);font-weight:700;font-size:13px;letter-spacing:.18em}
+    .meters{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
+    .meter{background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:18px}
+    .label{font-size:11px;color:var(--muted);letter-spacing:.11em;font-weight:800}
+    .value{font-size:32px;font-weight:800;margin-top:7px;font-variant-numeric:tabular-nums}
+    .value small{font-size:12px;color:var(--muted);margin-left:4px}
+    .gear{font-size:46px}
+    .rpmbar{height:7px;background:#20242d;border-radius:99px;overflow:hidden;margin-top:12px}
+    .rpmfill{height:100%;width:0%;background:linear-gradient(90deg,#8d94a3,#f4f6fb);transition:width .09s linear}
+    .controls{margin-top:18px;display:grid;gap:11px}
+    button{appearance:none;border:none;border-radius:18px;padding:17px 18px;font-size:16px;font-weight:800;cursor:pointer}
+    #start{background:#f4f6fb;color:#08090b}
+    #start.running{background:#282d37;color:#fff}
+    .secondary{background:var(--panel2);color:var(--text);border:1px solid var(--line)}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .settings{margin-top:18px;background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:18px}
+    .srow{display:flex;align-items:center;justify-content:space-between;gap:15px;margin:12px 0}
+    .srow span{font-size:14px;font-weight:700}
+    input[type=range]{width:55%;accent-color:#fff}
+    .hint{font-size:12px;line-height:1.55;color:var(--muted);margin-top:16px}
+    .error{color:#ff8e8e}
+    .badge{display:inline-flex;padding:5px 8px;border:1px solid var(--line);border-radius:999px;font-size:10px;color:var(--muted);margin-left:7px}
+    .hidden{display:none}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="brand"><span id="dot" class="dot"></span>V6 DRIVE <span class="badge">3.5 NA</span></div>
+    <div id="status" class="status">대기 중</div>
+  </div>
+
+  <section class="speedCard">
+    <div id="speed" class="speed">0</div>
+    <div class="unit">KM/H</div>
+  </section>
+
+  <div class="meters">
+    <div class="meter">
+      <div class="label">VIRTUAL RPM</div>
+      <div class="value"><span id="rpm">750</span><small>rpm</small></div>
+      <div class="rpmbar"><div id="rpmfill" class="rpmfill"></div></div>
+    </div>
+    <div class="meter">
+      <div class="label">GEAR</div>
+      <div id="gear" class="value gear">N</div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button id="start">START DRIVE</button>
+    <div class="row">
+      <button id="mute" class="secondary">SOUND ON</button>
+      <button id="demo" class="secondary">DEMO</button>
+    </div>
+  </div>
+
+  <div class="settings">
+    <div class="srow"><span>엔진음 크기</span><input id="vol" type="range" min="0" max="100" value="58"></div>
+    <div class="srow"><span>변속 성향</span><input id="sport" type="range" min="0" max="100" value="58"></div>
+  </div>
+
+  <p id="msg" class="hint">
+    START를 누르면 위치정보 권한을 요청합니다. 주행 중에는 화면을 켜둔 상태로 사용하세요.
+    GPS 속도 기반이라 실제 차량 RPM과 완전히 같지는 않지만, 속도·가속 변화에 맞춰 가상 6단 변속과 V6 엔진음이 따라갑니다.
+  </p>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = id => document.getElementById(id);
+  const ui = {
+    speed:$("speed"), rpm:$("rpm"), gear:$("gear"), rpmfill:$("rpmfill"),
+    status:$("status"), dot:$("dot"), start:$("start"), mute:$("mute"),
+    demo:$("demo"), vol:$("vol"), sport:$("sport"), msg:$("msg")
+  };
+
+  let running=false, demoMode=false, watchId=null, wakeLock=null;
+  let lastFix=null, speedKph=0, shownSpeed=0, accel=0, virtualThrottle=0.08;
+  let gear=1, rpm=750, lastEngineT=performance.now(), lastGearChange=0;
+  let audio=null, muted=false, synthTimer=null, demoStart=0;
+
+  // ---------- Audio: synthetic 3.5L naturally aspirated 60° V6 ----------
+  function createAudio(){
+    if(audio) return;
+    const Ctx=window.AudioContext||window.webkitAudioContext;
+    const ctx=new Ctx();
+    const master=ctx.createGain(); master.gain.value=0.0;
+    const low=ctx.createBiquadFilter(); low.type="lowpass"; low.frequency.value=2600; low.Q.value=.6;
+    const body=ctx.createBiquadFilter(); body.type="peaking"; body.frequency.value=145; body.Q.value=1.2; body.gain.value=5;
+    const comp=ctx.createDynamicsCompressor();
+    comp.threshold.value=-18; comp.knee.value=18; comp.ratio.value=5; comp.attack.value=.004; comp.release.value=.12;
+
+    const mix=ctx.createGain();
+    const harmonics=[
+      {m:1,g:.34,type:"sine"},
+      {m:2,g:.21,type:"sine"},
+      {m:3,g:.12,type:"triangle"},
+      {m:4,g:.075,type:"sine"},
+      {m:5,g:.045,type:"triangle"},
+      {m:6,g:.025,type:"sine"},
+    ];
+    const oscs=harmonics.map((h,i)=>{
+      const o=ctx.createOscillator(), g=ctx.createGain();
+      o.type=h.type; g.gain.value=h.g;
+      o.connect(g).connect(mix); o.start();
+      return {o,g,...h};
+    });
+
+    // Intake/high-rpm character
+    const intake=ctx.createOscillator(), intakeGain=ctx.createGain(), intakeBP=ctx.createBiquadFilter();
+    intake.type="triangle"; intakeGain.gain.value=.01; intakeBP.type="bandpass"; intakeBP.frequency.value=950; intakeBP.Q.value=.8;
+    intake.connect(intakeGain).connect(intakeBP).connect(mix); intake.start();
+
+    // Subtle broadband texture
+    const noiseBuffer=ctx.createBuffer(1, ctx.sampleRate*2, ctx.sampleRate);
+    const nd=noiseBuffer.getChannelData(0);
+    for(let i=0;i<nd.length;i++) nd[i]=(Math.random()*2-1);
+    const noise=ctx.createBufferSource(), noiseGain=ctx.createGain(), noiseBP=ctx.createBiquadFilter();
+    noise.buffer=noiseBuffer; noise.loop=true; noiseGain.gain.value=.004;
+    noiseBP.type="bandpass"; noiseBP.frequency.value=1100; noiseBP.Q.value=.45;
+    noise.connect(noiseGain).connect(noiseBP).connect(mix); noise.start();
+
+    mix.connect(body).connect(low).connect(comp).connect(master).connect(ctx.destination);
+    audio={ctx,master,low,body,comp,mix,oscs,intake,intakeGain,noiseGain};
+  }
+
+  function updateAudio(){
+    if(!audio) return;
+    const now=audio.ctx.currentTime;
+    // A 4-stroke V6 fires 3 times per crank revolution => rpm/20 Hz
+    const fireHz=Math.max(35, rpm/20);
+    audio.oscs.forEach((h,i)=>{
+      // very slight bank asymmetry to avoid sterile synth tone
+      const skew=(i%2?1.007:.995);
+      h.o.frequency.setTargetAtTime(fireHz*h.m*skew,now,.025);
+      const highBoost=1+Math.max(0,rpm-2800)/7000*(i/6);
+      h.g.gain.setTargetAtTime(h.g*highBoost,now,.04);
+    });
+    audio.intake.frequency.setTargetAtTime(Math.max(90,fireHz*3.15),now,.03);
+    const intakeAmt=Math.max(0,(rpm-2200)/4200) * (.025 + virtualThrottle*.055);
+    audio.intakeGain.gain.setTargetAtTime(intakeAmt,now,.05);
+    audio.noiseGain.gain.setTargetAtTime(.002 + virtualThrottle*.010,now,.06);
+    audio.low.frequency.setTargetAtTime(1500 + rpm*.26 + virtualThrottle*650,now,.05);
+
+    const userVol=Number(ui.vol.value)/100;
+    const load=.10 + .90*Math.pow(virtualThrottle,.68);
+    const idleTrim=rpm<1100 ? .62 : 1;
+    const target=(muted?0:userVol*load*idleTrim*.38);
+    audio.master.gain.setTargetAtTime(target,now,.045);
+  }
+
+  // ---------- GPS speed ----------
+  function haversine(a,b){
+    const R=6371000, rad=Math.PI/180;
+    const dLat=(b.lat-a.lat)*rad, dLon=(b.lon-a.lon)*rad;
+    const la1=a.lat*rad, la2=b.lat*rad;
+    const h=Math.sin(dLat/2)**2+Math.cos(la1)*Math.cos(la2)*Math.sin(dLon/2)**2;
+    return 2*R*Math.asin(Math.sqrt(h));
+  }
+
+  function onPosition(p){
+    const c=p.coords, now=p.timestamp||Date.now();
+    let mps=(Number.isFinite(c.speed) && c.speed>=0) ? c.speed : null;
+    const cur={lat:c.latitude,lon:c.longitude,t:now,accuracy:c.accuracy};
+
+    if(mps===null && lastFix){
+      const dt=(now-lastFix.t)/1000;
+      if(dt>.3 && dt<8){
+        const dist=haversine(lastFix,cur);
+        mps=dist/dt;
+      }
+    }
+    lastFix=cur;
+    if(mps===null) return;
+
+    // Reduce stationary GPS jitter. Poor fixes are down-weighted rather than ignored completely.
+    let raw=Math.max(0,mps*3.6);
+    if(raw<2.2) raw=0;
+    if(c.accuracy>50 && raw<6) raw=0;
+
+    const prev=speedKph;
+    const alpha=raw>prev ? .34 : .26;
+    speedKph=prev+(raw-prev)*alpha;
+    const dt=Math.max(.25,(performance.now()-lastEngineT)/1000);
+    accel=((speedKph-prev)/3.6)/dt;
+    setStatus(`GPS ±${Math.round(c.accuracy)}m`,true);
+  }
+
+  function onGeoError(e){
+    const reason=e.code===1?"위치 권한이 필요합니다":e.code===2?"GPS 위치를 받을 수 없습니다":"GPS 응답이 지연되고 있습니다";
+    ui.msg.innerHTML=`<span class="error">${reason}</span><br>설정 → 개인정보 보호 및 보안 → 위치 서비스 → Safari 웹 사이트에서 위치 접근을 허용해 주세요.`;
+    setStatus("GPS 오류",false);
+  }
+
+  // ---------- Virtual automatic gearbox ----------
+  const ratios=[0,3.80,2.22,1.52,1.15,.92,.74];
+  const finalDrive=3.35, tireCirc=2.00;
+
+  function rpmFor(kph,g){
+    if(kph<1.2) return 750;
+    const wheelRpm=(kph/3.6)/tireCirc*60;
+    return wheelRpm*ratios[g]*finalDrive;
+  }
+
+  function updateEngine(){
+    const now=performance.now(), dt=Math.min(.12,Math.max(.016,(now-lastEngineT)/1000));
+    lastEngineT=now;
+
+    if(demoMode){
+      const x=((now-demoStart)/1000)%16;
+      let target;
+      if(x<2) target=0;
+      else if(x<8) target=(x-2)/6*95;
+      else if(x<10) target=95;
+      else if(x<13) target=95+(x-10)/3*35;
+      else target=130-(x-13)/3*100;
+      const prev=speedKph; speedKph += (target-speedKph)*.035;
+      accel=((speedKph-prev)/3.6)/Math.max(dt,.02);
+    }
+
+    // Infer driver load from acceleration and speed. Cruise keeps a small baseline load.
+    let targetThrottle;
+    if(speedKph<1.5) targetThrottle=.07;
+    else if(accel>0) targetThrottle=Math.min(1,.16+accel/2.8);
+    else if(accel<-0.35) targetThrottle=.025;
+    else targetThrottle=.13;
+    virtualThrottle += (targetThrottle-virtualThrottle)*Math.min(1,dt*3.0);
+
+    const sport=Number(ui.sport.value)/100;
+    const shiftUp=2850 + sport*1500 + virtualThrottle*900; // ~2850 to 5250
+    const shiftDown=1150 + (1-sport)*150;
+    let calc=rpmFor(speedKph,gear);
+    const sinceShift=now-lastGearChange;
+
+    if(speedKph<1.2){
+      gear=1; calc=750 + virtualThrottle*120;
+    } else if(sinceShift>650){
+      if(calc>shiftUp && gear<6){
+        gear++; lastGearChange=now; calc=rpmFor(speedKph,gear);
+      } else if(calc<shiftDown && gear>1){
+        gear--; lastGearChange=now; calc=rpmFor(speedKph,gear);
+      }
+    }
+
+    // Avoid impossible synthetic RPM, but preserve natural idle.
+    calc=Math.max(750,Math.min(6200,calc));
+    // Smooth with quick rise, softer fall. Give a small rev lift under acceleration.
+    const desired=Math.min(6200,calc + Math.max(0,accel)*95);
+    const rAlpha=desired>rpm ? Math.min(1,dt*7.0) : Math.min(1,dt*4.5);
+    rpm += (desired-rpm)*rAlpha;
+
+    shownSpeed += (speedKph-shownSpeed)*Math.min(1,dt*5);
+    render();
+    updateAudio();
+    requestAnimationFrame(updateEngine);
+  }
+
+  function render(){
+    ui.speed.textContent=Math.max(0,Math.round(shownSpeed));
+    ui.rpm.textContent=Math.round(rpm/10)*10;
+    ui.gear.textContent=(speedKph<1.2)?"N":String(gear);
+    ui.rpmfill.style.width=Math.min(100,Math.max(0,(rpm-700)/(6200-700)*100))+"%";
+  }
+
+  function setStatus(s,on){
+    ui.status.textContent=s; ui.dot.classList.toggle("on",!!on);
+  }
+
+  async function acquireWakeLock(){
+    try{
+      if("wakeLock" in navigator) wakeLock=await navigator.wakeLock.request("screen");
+    }catch(e){}
+  }
+
+  async function startDrive(){
+    createAudio();
+    try{ await audio.ctx.resume(); }catch(e){}
+    if(running){ stopDrive(); return; }
+    running=true; demoMode=false;
+    ui.start.textContent="STOP DRIVE"; ui.start.classList.add("running");
+    ui.demo.textContent="DEMO";
+    await acquireWakeLock();
+    if(!navigator.geolocation){
+      onGeoError({code:2}); return;
+    }
+    watchId=navigator.geolocation.watchPosition(onPosition,onGeoError,{
+      enableHighAccuracy:true, maximumAge:500, timeout:10000
+    });
+    setStatus("GPS 연결 중…",true);
+  }
+
+  function stopDrive(){
+    running=false;
+    if(watchId!==null){navigator.geolocation.clearWatch(watchId);watchId=null;}
+    if(wakeLock){try{wakeLock.release()}catch(e){} wakeLock=null;}
+    speedKph=0; accel=0; gear=1;
+    ui.start.textContent="START DRIVE"; ui.start.classList.remove("running");
+    setStatus("대기 중",false);
+    if(audio) audio.master.gain.setTargetAtTime(0,audio.ctx.currentTime,.08);
+  }
+
+  async function toggleDemo(){
+    createAudio(); try{await audio.ctx.resume()}catch(e){}
+    if(running) stopDrive();
+    demoMode=!demoMode;
+    if(demoMode){
+      demoStart=performance.now(); speedKph=0; shownSpeed=0; gear=1;
+      ui.demo.textContent="DEMO STOP"; setStatus("데모 주행",true); await acquireWakeLock();
+    }else{
+      ui.demo.textContent="DEMO"; setStatus("대기 중",false);
+      if(audio) audio.master.gain.setTargetAtTime(0,audio.ctx.currentTime,.08);
+    }
+  }
+
+  ui.start.addEventListener("click",startDrive);
+  ui.demo.addEventListener("click",toggleDemo);
+  ui.mute.addEventListener("click",async()=>{
+    createAudio(); try{await audio.ctx.resume()}catch(e){}
+    muted=!muted; ui.mute.textContent=muted?"SOUND OFF":"SOUND ON";
+  });
+  document.addEventListener("visibilitychange",()=>{
+    if(document.visibilityState==="visible" && running) acquireWakeLock();
+  });
+
+  // Engine/UI loop always runs; audio stays silent until user interaction.
+  requestAnimationFrame(updateEngine);
+
+  if("serviceWorker" in navigator && location.protocol.startsWith("http")){
+    navigator.serviceWorker.register("./sw.js").catch(()=>{});
+  }
+})();
+</script>
+</body>
+</html>
