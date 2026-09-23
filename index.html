@@ -54,7 +54,7 @@
 <body>
 <div class="wrap">
   <div class="top">
-    <div class="brand"><span id="dot" class="dot"></span>V6 DRIVE <span class="badge">3.5 NA · v1.1</span></div>
+    <div class="brand"><span id="dot" class="dot"></span>V6 DRIVE <span class="badge">3.5 NA · v1.2</span></div>
     <div id="status" class="status">대기 중</div>
   </div>
 
@@ -94,7 +94,7 @@
 
   <p id="msg" class="hint">
     START를 누르면 위치정보 권한을 요청합니다. 주행 중에는 화면을 켜둔 상태로 사용하세요.
-    GPS 속도 기반이라 실제 차량 RPM과 완전히 같지는 않지만, 속도·가속 변화에 맞춰 가상 6단 변속과 V6 엔진음이 따라갑니다.
+    GPS 속도 기반이라 실제 차량 RPM과 완전히 같지는 않지만, 1km/h부터 D1로 인식하고 속도·가속 변화에 맞춰 가상 6단 변속과 V6 엔진음이 따라갑니다.
   </p>
 </div>
 
@@ -109,6 +109,7 @@
   };
 
   let running=false, demoMode=false, watchId=null, wakeLock=null;
+  let driveEngaged=false, belowStopSince=null;
   let lastFix=null, speedKph=0, shownSpeed=0, accel=0, virtualThrottle=0.08;
   let gpsHistory=[], gpsCount=0, lastGpsAt=0, gpsPollTimer=null, lastGpsSource="대기";
   let gear=1, rpm=750, lastEngineT=performance.now(), lastGearChange=0;
@@ -253,7 +254,7 @@
 
     // Remove stationary jitter but never force a moving car to zero just because
     // horizontal accuracy is temporarily poor.
-    if(raw<2.8) raw=0;
+    if(raw<0.45) raw=0;
     raw=Math.min(220,Math.max(0,raw));
 
     const prev=speedKph;
@@ -334,7 +335,7 @@
     let calc=rpmFor(speedKph,gear);
     const sinceShift=now-lastGearChange;
 
-    if(speedKph<1.2){
+    if(speedKph<0.45){
       gear=1; calc=750 + virtualThrottle*120;
     } else if(sinceShift>650){
       if(calc>shiftUp && gear<6){
@@ -360,7 +361,25 @@
   function render(){
     ui.speed.textContent=Math.max(0,Math.round(shownSpeed));
     ui.rpm.textContent=Math.round(rpm/10)*10;
-    ui.gear.textContent=(speedKph<1.2)?"N":String(gear);
+    // Low-speed drive hysteresis:
+    // engage Drive at >= 1.0 km/h,
+    // return to N only after <= 0.4 km/h has been held for 2 seconds.
+    const nowMs=performance.now();
+    if(!driveEngaged && speedKph>=1.0){
+      driveEngaged=true;
+      belowStopSince=null;
+    } else if(driveEngaged){
+      if(speedKph<=0.4){
+        if(belowStopSince===null) belowStopSince=nowMs;
+        if(nowMs-belowStopSince>=2000){
+          driveEngaged=false;
+          belowStopSince=null;
+        }
+      } else {
+        belowStopSince=null;
+      }
+    }
+    ui.gear.textContent=driveEngaged ? ("D"+gear) : "N";
     ui.rpmfill.style.width=Math.min(100,Math.max(0,(rpm-700)/(6200-700)*100))+"%";
   }
 
@@ -402,7 +421,7 @@
     if(watchId!==null){navigator.geolocation.clearWatch(watchId);watchId=null;}
     stopGpsFallbackPoll();
     if(wakeLock){try{wakeLock.release()}catch(e){} wakeLock=null;}
-    speedKph=0; accel=0; gear=1;
+    speedKph=0; accel=0; gear=1; driveEngaged=false; belowStopSince=null;
     ui.start.textContent="START DRIVE"; ui.start.classList.remove("running");
     setStatus("대기 중",false);
     if(audio) audio.master.gain.setTargetAtTime(0,audio.ctx.currentTime,.08);
