@@ -54,7 +54,7 @@
 <body>
 <div class="wrap">
   <div class="top">
-    <div class="brand"><span id="dot" class="dot"></span>V6 DRIVE <span class="badge">3.5 NA</span></div>
+    <div class="brand"><span id="dot" class="dot"></span>V6 DRIVE <span class="badge">3.5 NA · v1.1</span></div>
     <div id="status" class="status">대기 중</div>
   </div>
 
@@ -88,6 +88,10 @@
     <div class="srow"><span>변속 성향</span><input id="sport" type="range" min="0" max="100" value="58"></div>
   </div>
 
+  <div id="gpsdiag" class="hint" style="background:#111319;border:1px solid #262b36;border-radius:14px;padding:12px 14px;margin-top:14px">
+    GPS: 아직 위치 수신 전
+  </div>
+
   <p id="msg" class="hint">
     START를 누르면 위치정보 권한을 요청합니다. 주행 중에는 화면을 켜둔 상태로 사용하세요.
     GPS 속도 기반이라 실제 차량 RPM과 완전히 같지는 않지만, 속도·가속 변화에 맞춰 가상 6단 변속과 V6 엔진음이 따라갑니다.
@@ -101,11 +105,12 @@
   const ui = {
     speed:$("speed"), rpm:$("rpm"), gear:$("gear"), rpmfill:$("rpmfill"),
     status:$("status"), dot:$("dot"), start:$("start"), mute:$("mute"),
-    demo:$("demo"), vol:$("vol"), sport:$("sport"), msg:$("msg")
+    demo:$("demo"), vol:$("vol"), sport:$("sport"), msg:$("msg"), gpsdiag:$("gpsdiag")
   };
 
   let running=false, demoMode=false, watchId=null, wakeLock=null;
   let lastFix=null, speedKph=0, shownSpeed=0, accel=0, virtualThrottle=0.08;
+  let gpsHistory=[], gpsCount=0, lastGpsAt=0, gpsPollTimer=null, lastGpsSource="대기";
   let gear=1, rpm=750, lastEngineT=performance.now(), lastGearChange=0;
   let audio=null, muted=false, synthTimer=null, demoStart=0;
 
@@ -179,7 +184,7 @@
     audio.master.gain.setTargetAtTime(target,now,.045);
   }
 
-  // ---------- GPS speed ----------
+  // ---------- GPS speed (iPhone robust mode) ----------
   function haversine(a,b){
     const R=6371000, rad=Math.PI/180;
     const dLat=(b.lat-a.lat)*rad, dLon=(b.lon-a.lon)*rad;
@@ -188,38 +193,105 @@
     return 2*R*Math.asin(Math.sqrt(h));
   }
 
+  function median(arr){
+    if(!arr.length) return null;
+    const a=[...arr].sort((x,y)=>x-y);
+    const m=Math.floor(a.length/2);
+    return a.length%2 ? a[m] : (a[m-1]+a[m])/2;
+  }
+
   function onPosition(p){
     const c=p.coords, now=p.timestamp||Date.now();
-    let mps=(Number.isFinite(c.speed) && c.speed>=0) ? c.speed : null;
-    const cur={lat:c.latitude,lon:c.longitude,t:now,accuracy:c.accuracy};
+    if(!Number.isFinite(c.latitude)||!Number.isFinite(c.longitude)) return;
 
-    if(mps===null && lastFix){
-      const dt=(now-lastFix.t)/1000;
-      if(dt>.3 && dt<8){
-        const dist=haversine(lastFix,cur);
-        mps=dist/dt;
+    const cur={
+      lat:c.latitude, lon:c.longitude, t:now,
+      accuracy:Number.isFinite(c.accuracy)?c.accuracy:999,
+      nativeKph:(Number.isFinite(c.speed)&&c.speed>=0)?c.speed*3.6:null
+    };
+
+    // Ignore exact duplicate callbacks, but keep genuinely new fixes.
+    if(lastFix && cur.t===lastFix.t && cur.lat===lastFix.lat && cur.lon===lastFix.lon) return;
+    lastFix=cur; lastGpsAt=Date.now(); gpsCount++;
+
+    gpsHistory.push(cur);
+    gpsHistory=gpsHistory.filter(x=>cur.t-x.t<=9000).slice(-12);
+
+    // iOS sometimes reports coords.speed as null/0. Calculate speed from
+    // position displacement over several different time windows as a fallback.
+    const distanceSpeeds=[];
+    for(const old of gpsHistory){
+      const dt=(cur.t-old.t)/1000;
+      if(dt>=1.2 && dt<=7.0){
+        const d=haversine(old,cur);
+        const kph=(d/dt)*3.6;
+        if(Number.isFinite(kph) && kph>=0 && kph<240) distanceSpeeds.push(kph);
       }
     }
-    lastFix=cur;
-    if(mps===null) return;
+    const distKph=median(distanceSpeeds);
 
-    // Reduce stationary GPS jitter. Poor fixes are down-weighted rather than ignored completely.
-    let raw=Math.max(0,mps*3.6);
-    if(raw<2.2) raw=0;
-    if(c.accuracy>50 && raw<6) raw=0;
+    let raw=null, source="";
+    const native=cur.nativeKph;
+
+    if(native!==null && native>1.0 && distKph!==null){
+      raw=native*0.72+distKph*0.28; source="iPhone speed + GPS 이동거리";
+    }else if(native!==null && native>1.0){
+      raw=native; source="iPhone speed";
+    }else if(distKph!==null && distKph>2.0){
+      raw=distKph; source="GPS 이동거리";
+    }else if(native!==null){
+      raw=native; source="iPhone speed";
+    }else if(distKph!==null){
+      raw=distKph; source="GPS 이동거리";
+    }
+
+    if(raw===null){
+      ui.gpsdiag.textContent=`GPS: 수신 ${gpsCount}회 · 정확도 ±${Math.round(cur.accuracy)}m · 속도 계산 준비 중`;
+      setStatus(`GPS ±${Math.round(cur.accuracy)}m`,true);
+      return;
+    }
+
+    // Remove stationary jitter but never force a moving car to zero just because
+    // horizontal accuracy is temporarily poor.
+    if(raw<2.8) raw=0;
+    raw=Math.min(220,Math.max(0,raw));
 
     const prev=speedKph;
-    const alpha=raw>prev ? .34 : .26;
+    const alpha=raw>prev ? .48 : .34;
     speedKph=prev+(raw-prev)*alpha;
-    const dt=Math.max(.25,(performance.now()-lastEngineT)/1000);
-    accel=((speedKph-prev)/3.6)/dt;
-    setStatus(`GPS ±${Math.round(c.accuracy)}m`,true);
+
+    // Acceleration is based on GPS update time, not animation-frame time.
+    const prevFix=gpsHistory.length>=2 ? gpsHistory[gpsHistory.length-2] : null;
+    const gpsDt=prevFix ? Math.max(.35,(cur.t-prevFix.t)/1000) : 1;
+    accel=((speedKph-prev)/3.6)/gpsDt;
+
+    lastGpsSource=source;
+    ui.gpsdiag.textContent=
+      `GPS: 수신 ${gpsCount}회 · 정확도 ±${Math.round(cur.accuracy)}m · 원시속도 ${raw.toFixed(1)}km/h · ${source}`;
+    setStatus(`GPS ±${Math.round(cur.accuracy)}m`,true);
   }
 
   function onGeoError(e){
     const reason=e.code===1?"위치 권한이 필요합니다":e.code===2?"GPS 위치를 받을 수 없습니다":"GPS 응답이 지연되고 있습니다";
-    ui.msg.innerHTML=`<span class="error">${reason}</span><br>설정 → 개인정보 보호 및 보안 → 위치 서비스 → Safari 웹 사이트에서 위치 접근을 허용해 주세요.`;
+    ui.msg.innerHTML=`<span class="error">${reason}</span><br>아이폰 설정 → 개인정보 보호 및 보안 → 위치 서비스에서 Safari 웹 사이트의 위치 접근과 정확한 위치를 허용해 주세요.`;
+    ui.gpsdiag.textContent=`GPS 오류 ${e.code}: ${e.message||reason}`;
     setStatus("GPS 오류",false);
+  }
+
+  function startGpsFallbackPoll(){
+    if(gpsPollTimer) clearInterval(gpsPollTimer);
+    gpsPollTimer=setInterval(()=>{
+      if(!running || !navigator.geolocation) return;
+      if(Date.now()-lastGpsAt>2200){
+        navigator.geolocation.getCurrentPosition(onPosition,onGeoError,{
+          enableHighAccuracy:true, maximumAge:0, timeout:7000
+        });
+      }
+    },1500);
+  }
+
+  function stopGpsFallbackPoll(){
+    if(gpsPollTimer){clearInterval(gpsPollTimer);gpsPollTimer=null;}
   }
 
   // ---------- Virtual automatic gearbox ----------
@@ -313,15 +385,22 @@
     if(!navigator.geolocation){
       onGeoError({code:2}); return;
     }
-    watchId=navigator.geolocation.watchPosition(onPosition,onGeoError,{
-      enableHighAccuracy:true, maximumAge:500, timeout:10000
+    gpsHistory=[]; gpsCount=0; lastGpsAt=0; lastFix=null;
+    ui.gpsdiag.textContent="GPS: 위치 요청 중…";
+    navigator.geolocation.getCurrentPosition(onPosition,onGeoError,{
+      enableHighAccuracy:true, maximumAge:0, timeout:10000
     });
+    watchId=navigator.geolocation.watchPosition(onPosition,onGeoError,{
+      enableHighAccuracy:true, maximumAge:0, timeout:10000
+    });
+    startGpsFallbackPoll();
     setStatus("GPS 연결 중…",true);
   }
 
   function stopDrive(){
     running=false;
     if(watchId!==null){navigator.geolocation.clearWatch(watchId);watchId=null;}
+    stopGpsFallbackPoll();
     if(wakeLock){try{wakeLock.release()}catch(e){} wakeLock=null;}
     speedKph=0; accel=0; gear=1;
     ui.start.textContent="START DRIVE"; ui.start.classList.remove("running");
